@@ -1,0 +1,188 @@
+name: northwind-cdc-lab
+
+# Todos os serviços recebem o .env inteiro (env_file). Antes de subir: cp .env.example .env
+# Em `environment:` fica só o que NÃO está no .env (configuração interna de cada serviço).
+
+services:
+  # Banco de "produção": Postgres + Northwind, com replicação lógica habilitada
+  postgres:
+    image: postgres:17.9
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=4
+      - -c
+      - max_wal_senders=4
+    env_file: .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    healthcheck:
+      # -h 127.0.0.1: durante o init o servidor temporário só escuta no socket,
+      # o healthcheck via TCP só passa quando o dump terminou de carregar.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [lab]
+
+  # Kafka em modo KRaft (sem Zookeeper), nó único: broker + controller
+  kafka:
+    image: apache/kafka:4.3.2
+    env_file: .env
+    environment:
+      CLUSTER_ID: northwind-cdc-lab-0001
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # INTERNAL: usado pelos containers
+      # EXTERNAL: usado pelo host
+      # CONTROLLER: quórum KRaft
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:${KAFKA_PORT:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      # Nó único => replica 1 em tudo
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 15s
+      retries: 30
+      start_period: 10s
+    networks: [lab]
+
+  # Kafka Connect com o conector Debezium para Postgres
+  connect:
+    image: quay.io/debezium/connect:3.7.1.Final
+    depends_on:
+      kafka:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: connect-cluster
+      CONFIG_STORAGE_TOPIC: _connect_configs
+      OFFSET_STORAGE_TOPIC: _connect_offsets
+      STATUS_STORAGE_TOPIC: _connect_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      # JSON do conector referencia ${env:VAR} em vez de guardar a senha em texto.
+      CONNECT_CONFIG_PROVIDERS: env
+      CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+    ports:
+      - "${CONNECT_PORT:-8083}:8083"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8083/connectors >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks: [lab]
+
+  # Job: registra/atualiza o conector Debezium e espera ele ficar RUNNING
+  connect-init:
+    image: curlimages/curl:8.23.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      connect:
+        condition: service_healthy
+    env_file: .env
+    volumes:
+      - ./connect:/connect:ro
+    entrypoint: ["sh", "/connect/register.sh"]
+    restart: "no"
+    networks: [lab]
+
+  # UI web do Kafka
+  kafka-ui:
+    image: kafbat/kafka-ui:v1.5.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+      connect:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      KAFKA_CLUSTERS_0_NAME: northwind-lab
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: debezium
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://connect:8083
+    ports:
+      - "${KAFKA_UI_PORT:-8080}:8080"
+    networks: [lab]
+
+  # ClickHouse: camada raw (ingestão) + databases bronze/silver/gold (dbt)
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8.33.6
+    env_file: .env
+    environment:
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse/config.d/kafka.xml:/etc/clickhouse-server/config.d/kafka.xml:ro
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:-18123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT:-19000}:9000"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [lab]
+
+  # Job: cria tópicos ausentes e gera o DDL da raw a partir do information_schema
+  raw-init:
+    build: ./tools
+    image: northwind-cdc-lab/tools:local
+    command: ["python", "raw_init.py"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      connect-init:
+        condition: service_completed_successfully
+    env_file: .env
+    restart: "no"
+    networks: [lab]
+
+  # Gerador de tráfego: INSERT/UPDATE/DELETE contínuos no Northwind (configurável no .env)
+  traffic-generator:
+    image: northwind-cdc-lab/tools:local
+    command: ["python", "traffic.py"]
+    depends_on:
+      raw-init:
+        condition: service_completed_successfully
+    env_file: .env
+    restart: unless-stopped
+    networks: [lab]
+
+networks:
+  lab:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  kafka_data:
+  clickhouse_data:

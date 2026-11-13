@@ -1,0 +1,11 @@
+<!--
+  Configuração global do Kafka engine (librdkafka).
+  auto.offset.reset = earliest: um consumer group NOVO começa do início do tópico,
+  garantindo que o snapshot do Debezium (eventos op=r) seja lido na primeira subida.
+  Consumer groups que já têm offset salvo continuam de onde pararam.
+-->
+<clickhouse>
+    <kafka>
+        <auto_offset_reset>earliest</auto_offset_reset>
+    </kafka>
+</clickhouse>

@@ -1,0 +1,33 @@
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "tasks.max": "1",
+
+  "database.hostname": "postgres",
+  "database.port": "5432",
+  "database.dbname": "${env:POSTGRES_DB}",
+  "database.user": "${env:POSTGRES_USER}",
+  "database.password": "${env:POSTGRES_PASSWORD}",
+
+  "topic.prefix": "${env:TOPIC_PREFIX}",
+  "schema.include.list": "public",
+
+  "plugin.name": "pgoutput",
+  "slot.name": "debezium_northwind",
+  "publication.name": "dbz_northwind",
+  "publication.autocreate.mode": "filtered",
+
+  "snapshot.mode": "initial",
+  "tombstones.on.delete": "false",
+
+  "time.precision.mode": "adaptive",
+  "binary.handling.mode": "base64",
+  "decimal.handling.mode": "string",
+
+  "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "key.converter.schemas.enable": "false",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter.schemas.enable": "false",
+
+  "topic.creation.default.replication.factor": "1",
+  "topic.creation.default.partitions": "1"
+}

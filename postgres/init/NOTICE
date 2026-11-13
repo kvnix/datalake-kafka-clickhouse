@@ -1,0 +1,10 @@
+01-northwind.sql
+================
+
+Origem: https://github.com/pthom/northwind_psql
+Commit: cd0ef28d66369fbe177778e604e4be0f153c9e5c (2024-08-31)
+Arquivo: northwind.sql (copiado sem alterações)
+
+O banco Northwind foi criado pela Microsoft e é distribuído sob a
+Microsoft Public License (Ms-PL). Veja o arquivo LICENSE no repositório
+de origem para o texto completo da licença.
