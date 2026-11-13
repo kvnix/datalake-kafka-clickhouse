@@ -191,6 +191,13 @@ snapshot**.
 A senha não está no JSON. A config usa `${env:POSTGRES_PASSWORD}`, que o *config provider* do Connect resolve
 a partir das variáveis de ambiente do container. Por isso a API REST devolve a referência e não o valor.
 
+O container do Connect recebe o `.env` inteiro, então o provider tem uma **allowlist**
+(`CONNECT_CONFIG_PROVIDERS_ENV_PARAM_ALLOWLIST_PATTERN`). Só `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` e
+`TOPIC_PREFIX` podem ser lidas via `${env:...}`. Sem isso, qualquer um com acesso à API REST (que não tem
+autenticação) poderia criar um conector referenciando `${env:CLICKHOUSE_PASSWORD}` e extrair o segredo. Uma
+variável fora da lista fica literalmente como `${env:...}`, sem ser resolvida. A porta 8083 também só é
+publicada em `127.0.0.1`.
+
 Configurações importantes (`connect/northwind-cdc.json`):
 
 | config | valor | por quê |

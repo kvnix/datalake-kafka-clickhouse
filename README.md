@@ -60,7 +60,19 @@ Confere o conector RUNNING, as 14 tabelas raw, o snapshot igual ao dump original
 | `raw-init` | job: cria tópicos ausentes + DDL da raw | — |
 
 > As portas do ClickHouse fogem do padrão (8123/9000) para não conflitar com outro ClickHouse local.
-> As credenciais são **de laboratório**, só para uso local.
+
+### Segurança
+
+O lab foi feito para rodar **só na sua máquina**:
+
+- Todas as portas são publicadas em **`127.0.0.1`**: nada fica acessível a partir da rede (Wi-Fi, rede da empresa).
+  Kafka, Kafka Connect e Kafka UI **não têm autenticação**, e é por isso que eles não podem ficar expostos.
+- As credenciais do `.env.example` são **de laboratório**. Não reutilize em outros ambientes e não faça commit do `.env`
+  (ele já está no `.gitignore`).
+- O Debezium usa o superusuário do Postgres por simplicidade. Em produção, use um usuário dedicado com `REPLICATION`
+  e `SELECT` só nas tabelas capturadas.
+- Se você mudar o bind para `0.0.0.0` (para acessar de outra máquina), antes troque as senhas e habilite
+  autenticação no Kafka Connect e na Kafka UI.
 
 Primeiros comandos:
 
