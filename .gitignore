@@ -1,10 +1,6 @@
 # Configuração local (copie de .env.example)
 .env
 
-# Planejamento e ferramentas locais (não fazem parte do lab)
-openspec/
-.claude/
-
 # Python
 __pycache__/
 .pytest_cache/
